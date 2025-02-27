@@ -1,0 +1,22 @@
+{
+  "name": "discord-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "mongoose": "^8.10.1",
+    "pugsharp": "^0.3.3",
+    "rcon-client": "^4.2.5",
+    "rcon-srcds": "^2.1.0",
+    "srcds-rcon": "^2.2.1",
+    "uuidv7": "^1.0.2"
+  }
+}
