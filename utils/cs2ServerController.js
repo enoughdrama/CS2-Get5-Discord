@@ -1,41 +1,22 @@
-// cs2ServerController.js
-const { Rcon } = require('rcon-client'); // Используем rcon-client вместо устаревшего PugSharp
+const { Rcon } = require('rcon-client');
 const User = require('../models/user');
 
 const servers = [
     {
-        host: '178.253.55.109',
+        host: '',
         port: 27015,
-        rconPassword: 'DSMFKSaspdpKPpdsgfgSDFSDMDSMfksmd'
+        rconPassword: ''
     }
 ];
 
 const activeServers = [];
 
-/**
- * Возвращает первый сервер, который не находится в activeServers.
- */
 function findAvailableServer() {
     return servers.find(server =>
         !activeServers.some(active => active.host === server.host && active.port === server.port)
     ) || null;
 }
 
-/**
- * Создает матч на CS2 сервере:
- * 1. Находит доступный сервер и помечает его как занятый.
- * 2. Устанавливает карту, вайтлистит игроков.
- * 3. Запускает knife round, 5-минутный warmup, затем создает и стартует матч.
- *
- * @param {Object} matchData - Данные матча, содержащие:
- *    - gameId: идентификатор матча
- *    - finalMap: название карты (для смены уровня)
- *    - players: массив или Set userId участников
- *
- * @returns {Promise<boolean>} - true, если матч успешно создан.
- *
- * @throws {Error} - если нет доступных серверов или возникает другая ошибка.
- */
 async function createMatchOnServer(matchData) {
     const availableServerConfig = findAvailableServer();
     if (!availableServerConfig) {
@@ -44,7 +25,6 @@ async function createMatchOnServer(matchData) {
 
     activeServers.push(availableServerConfig);
 
-    // Устанавливаем RCON-соединение с сервером
     const server = await Rcon.connect({
         host: availableServerConfig.host,
         port: availableServerConfig.port,
@@ -53,14 +33,12 @@ async function createMatchOnServer(matchData) {
 
     try {
         console.log(`Устанавливаем карту "${matchData.finalMap}" на сервере ${availableServerConfig.host}:${availableServerConfig.port}`);
-        // Смена карты: команда changelevel принимает map's code (например, mirage, dust2 и т.д.)
         await server.send(`changelevel ${matchData.finalMap}`);
 
         const players = Array.isArray(matchData.players)
             ? matchData.players
             : Array.from(matchData.players);
 
-        // Вайтлистим каждого игрока по его SteamID
         for (const playerId of players) {
             const user = await User.findOne({ userId: playerId });
             if (!user) {
@@ -71,30 +49,22 @@ async function createMatchOnServer(matchData) {
             await server.send(`whitelist_add ${user.steamId}`);
         }
 
-        // Запускаем knife round
         console.log(`Запускаем knife round на сервере ${availableServerConfig.host}`);
         await server.send("knife_round_start");
 
-        // Запускаем 5-минутный warmup
         console.log(`Запускаем 5-минутный warmup на сервере ${availableServerConfig.host}`);
         await server.send("mp_warmup_time 300");
         await server.send("mp_warmup_start");
 
-        // Создаем матч по параметрам, используя команды из CounterstrikeSharp API
-
-        // Если задан URL для конфигурации матча, загружаем её
         if (matchData.configUrl) {
             console.log(`Загружаем конфигурацию матча из URL: ${matchData.configUrl}`);
-            // Если также передан authToken, добавляем его
             const tokenPart = matchData.authToken ? ` ${matchData.authToken}` : '';
             await server.send(`ps_loadconfig ${matchData.configUrl}${tokenPart}`);
         }
-        // Если задан файл конфигурации, загружаем его
         else if (matchData.configFile) {
             console.log(`Загружаем конфигурацию матча из файла: ${matchData.configFile}`);
             await server.send(`ps_loadconfigfile ${matchData.configFile}`);
         }
-        // Иначе создаем матч без предзагруженной конфигурации
         else {
             console.log(`Создаем матч без предзагруженной конфигурации`);
             await server.send("ps_creatematch");
@@ -117,7 +87,6 @@ async function createMatchOnServer(matchData) {
             await server.send(`ps_teammode ${matchData.teamMode}`);
         }
 
-        // Запускаем матч
         console.log(`Запускаем матч с помощью ps_startmatch на сервере ${availableServerConfig.host}`);
         await server.send("ps_startmatch");
 
@@ -129,7 +98,7 @@ async function createMatchOnServer(matchData) {
     } catch (error) {
         removeServerFromActive(availableServerConfig);
         console.error(`Ошибка при создании матча на сервере ${availableServerConfig.host}:`, error);
-        // Закрываем RCON-соединение при ошибке
+
         await server.end();
         throw error;
     }
@@ -151,9 +120,8 @@ async function endMatchOnServer(matchData, endDiscordCallback) {
     }
     try {
         console.log(`Завершаем игру на сервере ${matchData.serverConfig.host}`);
-        // Отправляем команду для немедленной остановки матча (например, ps_stopmatch)
+        
         await matchData.serverInstance.send("ps_stopmatch");
-        // Завершаем RCON-соединение
         await matchData.serverInstance.end();
 
         removeServerFromActive(matchData.serverConfig);
