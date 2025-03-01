@@ -1,14 +1,5 @@
-////////////////////////////////////////////////////////////////////////////////
-// ФАЙЛ: utils/statsManager.js
-// Пример: храним статистику об играх в массиве (в оперативной памяти).
-// В реальных проектах используйте базы данных (SQL, Mongo, и т.п.).
-////////////////////////////////////////////////////////////////////////////////
-
 const gamesStats = [];
 
-/**
- * Сохранить данные игры в массив
- */
 function recordGameStats(gameData) {
   const now = new Date();
   const statsEntry = {
@@ -23,9 +14,6 @@ function recordGameStats(gameData) {
   console.log('Игра сохранена в статистику:', statsEntry);
 }
 
-/**
- * Получить все записи статистики
- */
 function getAllStats() {
   return gamesStats;
 }
