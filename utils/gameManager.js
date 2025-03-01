@@ -1,4 +1,3 @@
-// gameManager.js
 const { uuidv7 } = require('uuidv7');
 const {
   ChannelType,
@@ -12,7 +11,6 @@ const {
 const User = require('../models/user');
 const Match = require('../models/match');
 
-// Импортируем наш новый контроллер для CS2-серверов
 const {
   createMatchOnServer,
   endMatchOnServer
@@ -50,7 +48,6 @@ const activeGames = new Map();
         team1ChannelId: doc.team1ChannelId,
         team2ChannelId: doc.team2ChannelId,
 
-        // Сохраняем embedMessageId, чтобы в дальнейшем можно было восстановить embed-сообщение
         embedMessageId: doc.embedMessageId,
         embedMessage: null
       };
@@ -64,7 +61,6 @@ const activeGames = new Map();
 
 module.exports.activeGames = activeGames;
 
-// Возможные карты
 const MAPS = [
   { name: 'Mirage', code: 'de_mirage', emoji: '🏜️' },
   { name: 'Dust', code: 'de_dust2', emoji: '🌪️' },
@@ -72,10 +68,6 @@ const MAPS = [
   { name: 'Train', code: 'de_train', emoji: '🚂' },
 ];
 
-/**
- * Создаем новый матч и помещаем его в activeGames.
- * Также создаём документ в БД (коллекция Match).
- */
 async function createNewGame({ guild, queueTextChannel, lobbyVoice, requiredPlayers }) {
   const gameId = uuidv7();
 
@@ -132,10 +124,6 @@ async function createNewGame({ guild, queueTextChannel, lobbyVoice, requiredPlay
 }
 module.exports.createNewGame = createNewGame;
 
-/**
- * При необходимости вызывается, чтобы восстановить embed-сообщения
- * для матчей, у которых оно отсутствует в памяти (gameData.embedMessage = null).
- */
 async function restoreActiveMatches(client) {
   const ongoingMatches = await Match.find({ gameStage: { $ne: 'teams_done' } });
   for (const matchDoc of ongoingMatches) {
@@ -181,9 +169,6 @@ async function restoreActiveMatches(client) {
 }
 module.exports.restoreActiveMatches = restoreActiveMatches;
 
-/**
- * Функция для формирования описания матча на этапе "waiting".
- */
 function getWaitingDescription(gameData) {
   const cnt = gameData.players.size;
   const req = gameData.requiredPlayers;
@@ -191,15 +176,10 @@ function getWaitingDescription(gameData) {
   return `Нужно игроков: **${req}**\nУже в Lobby (${cnt}):\n${list || '_никого нет_'}\n`;
 }
 
-/**
- * Отслеживает вход/выход игроков в/из голосового канала Lobby,
- * обновляет списки игроков в activeGames и в БД.
- */
 async function manageLobbyJoinLeave(oldState, newState, client) {
   const leftChannel = oldState.channel;
   const joinedChannel = newState.channel;
 
-  // Проверка привязки Steam и блокировки, только если канал - игровой Lobby
   if (joinedChannel) {
     const member = newState.member;
     const isGameLobby = Array.from(activeGames.values()).some(
@@ -217,7 +197,6 @@ async function manageLobbyJoinLeave(oldState, newState, client) {
           return;
         }
 
-        // Если пользователь уже играет в другом матче (не на этапе waiting), выкидываем
         for (const data of activeGames.values()) {
           if (
             data.players.has(member.id) &&
@@ -238,7 +217,6 @@ async function manageLobbyJoinLeave(oldState, newState, client) {
   let leftGameData = null;
   let joinedGameData = null;
 
-  // Ищем игру, из которой пользователь вышел (только если там стадия waiting)
   if (leftChannel) {
     for (const data of activeGames.values()) {
       if (data.lobbyId === leftChannel.id && data.gameStage === 'waiting') {
@@ -248,7 +226,6 @@ async function manageLobbyJoinLeave(oldState, newState, client) {
     }
   }
 
-  // Ищем игру, в которую пользователь зашёл (только если там стадия waiting)
   if (joinedChannel) {
     for (const data of activeGames.values()) {
       if (data.lobbyId === joinedChannel.id && data.gameStage === 'waiting') {
@@ -258,7 +235,6 @@ async function manageLobbyJoinLeave(oldState, newState, client) {
     }
   }
 
-  // Удаляем игрока из старого лобби
   if (leftGameData) {
     leftGameData.players.delete(oldState.id);
     await updateMatchInDB(leftGameData.gameId, {
@@ -267,7 +243,6 @@ async function manageLobbyJoinLeave(oldState, newState, client) {
     await updateWaitingEmbed(leftGameData, client);
   }
 
-  // Добавляем игрока в новое лобби
   if (joinedGameData) {
     joinedGameData.players.add(newState.id);
     await updateMatchInDB(joinedGameData.gameId, {
@@ -275,7 +250,6 @@ async function manageLobbyJoinLeave(oldState, newState, client) {
     });
     await updateWaitingEmbed(joinedGameData, client);
 
-    // Если набралось достаточно игроков, переходим к readyCheck
     if (joinedGameData.players.size >= joinedGameData.requiredPlayers) {
       const guild = await client.guilds.fetch(joinedGameData.guildId);
       const lobby = guild.channels.cache.get(joinedGameData.lobbyId);
@@ -289,14 +263,9 @@ async function manageLobbyJoinLeave(oldState, newState, client) {
 }
 module.exports.manageLobbyJoinLeave = manageLobbyJoinLeave;
 
-/**
- * Обновление эмбеда лобби (waiting).
- * Восстанавливает embedMessage, если оно отсутствует в памяти.
- */
 async function updateWaitingEmbed(gameData, client) {
   if (gameData.gameStage !== 'waiting') return;
 
-  // Если embedMessage отсутствует, пытаемся восстановить
   if (!gameData.embedMessage && gameData.embedMessageId) {
     try {
       const guild = await client.guilds.fetch(gameData.guildId);
@@ -321,9 +290,6 @@ async function updateWaitingEmbed(gameData, client) {
   await gameData.embedMessage.edit({ embeds: [embed], components: [] });
 }
 
-/**
- * Начало этапа "readyCheck". Устанавливаем stage и ждём подтверждения всех игроков.
- */
 async function startReadyCheck(gameData, client) {
   gameData.gameStage = 'readyCheck';
   gameData.readyPlayers.clear();
@@ -333,7 +299,6 @@ async function startReadyCheck(gameData, client) {
     readyPlayers: []
   });
 
-  // Попытка восстановить embedMessage, если нужно
   if (!gameData.embedMessage && gameData.embedMessageId) {
     try {
       const guild = await client.guilds.fetch(gameData.guildId);
@@ -369,7 +334,6 @@ async function startReadyCheck(gameData, client) {
     components: [row]
   });
 
-  // Таймер на 15 секунд для подтверждения
   gameData.readyTimeout = setTimeout(async () => {
     const notReady = Array.from(gameData.players).filter(pid => !gameData.readyPlayers.has(pid));
     for (const nr of notReady) {
@@ -389,9 +353,6 @@ async function startReadyCheck(gameData, client) {
 }
 module.exports.startReadyCheck = startReadyCheck;
 
-/**
- * Формирует описание для эмбеда этапа readyCheck.
- */
 function getReadyDescriptionCheck(gameData) {
   let desc = `Нажмите "Я готов!" в течение 15 секунд.\n\n`;
   for (const pid of gameData.players) {
@@ -402,9 +363,6 @@ function getReadyDescriptionCheck(gameData) {
   return desc;
 }
 
-/**
- * Обработка нажатия кнопки "Я готов!"
- */
 async function handleReadyCheck(interaction, gameId) {
   const gameData = activeGames.get(gameId);
   if (!gameData || gameData.gameStage !== 'readyCheck') {
@@ -430,7 +388,6 @@ async function handleReadyCheck(interaction, gameId) {
     components: interaction.message.components
   });
 
-  // Если все подтвердили готовность, двигаемся дальше
   if (gameData.readyPlayers.size === gameData.players.size) {
     if (gameData.readyTimeout) {
       clearTimeout(gameData.readyTimeout);
@@ -441,9 +398,6 @@ async function handleReadyCheck(interaction, gameId) {
 }
 module.exports.handleReadyCheck = handleReadyCheck;
 
-/**
- * Возвращаемся к "waiting", если не все подтвердили готовность.
- */
 async function returnToWaitingStage(gameData, client) {
   gameData.gameStage = 'waiting';
 
@@ -466,14 +420,10 @@ async function returnToWaitingStage(gameData, client) {
 }
 module.exports.returnToWaitingStage = returnToWaitingStage;
 
-/**
- * Начинаем стадию "драфта" капитанов.
- */
 async function startDraftPhase(gameData, client) {
   gameData.gameStage = 'draft';
   gameData.draftTurns = 0;
 
-  // Если не выбраны капитаны, выбираем случайно
   if (!gameData.captain1 || !gameData.captain2) {
     const arr = Array.from(gameData.players);
     shuffleArray(arr);
@@ -500,7 +450,6 @@ async function startDraftPhase(gameData, client) {
 
   const guild = await client.guilds.fetch(gameData.guildId);
 
-  // Если свободных игроков меньше 2, сразу переходим к стадиям (у нас draft быстро закончится)
   if (gameData.restPlayers.length < 2) {
     if (gameData.restPlayers.length === 1) {
       const onlyOne = gameData.restPlayers[0];
@@ -553,9 +502,6 @@ async function startDraftPhase(gameData, client) {
 }
 module.exports.startDraftPhase = startDraftPhase;
 
-/**
- * Обработка интеракции при драфте (капитан выбирает игрока).
- */
 async function handlePickInteraction(interaction, gameId, pickPlayerId) {
   const gameData = activeGames.get(gameId);
   if (!gameData || gameData.gameStage !== 'draft') {
@@ -574,7 +520,6 @@ async function handlePickInteraction(interaction, gameId, pickPlayerId) {
     return interaction.reply({ content: 'Этот игрок уже выбран!', ephemeral: true });
   }
 
-  // Перекладываем игрока в команду капитана
   gameData.restPlayers.splice(idx, 1);
   if (isC1Turn) gameData.team1.push(pickPlayerId);
   else gameData.team2.push(pickPlayerId);
@@ -587,7 +532,6 @@ async function handlePickInteraction(interaction, gameId, pickPlayerId) {
     draftTurns: gameData.draftTurns
   });
 
-  // Обновляем кнопки, чтобы выбрать уже нельзя было
   const oldRows = interaction.message.components;
   const newRows = [];
   for (const row of oldRows) {
@@ -603,7 +547,7 @@ async function handlePickInteraction(interaction, gameId, pickPlayerId) {
       if (pId === pickPlayerId) {
         btn.setDisabled(true).setStyle(ButtonStyle.Danger);
       }
-      // Если игрока больше нет среди restPlayers, делаем кнопку неактивной
+      
       if (!gameData.restPlayers.includes(pId)) {
         btn.setDisabled(true);
       }
@@ -613,7 +557,6 @@ async function handlePickInteraction(interaction, gameId, pickPlayerId) {
   }
   await interaction.update({ components: newRows });
 
-  // Если остался один или ноль свободных, завершаем драфт
   if (gameData.restPlayers.length === 1) {
     const lonePid = gameData.restPlayers[0];
     if (gameData.team1.length <= gameData.team2.length) {
@@ -634,7 +577,6 @@ async function handlePickInteraction(interaction, gameId, pickPlayerId) {
     return;
   }
 
-  // Иначе просто обновляем описание драфта
   const guild = await interaction.guild;
   const team1Members = await Promise.all(gameData.team1.map(async pid => {
     const member = await guild.members.fetch(pid);
@@ -655,9 +597,6 @@ async function handlePickInteraction(interaction, gameId, pickPlayerId) {
 }
 module.exports.handlePickInteraction = handlePickInteraction;
 
-/**
- * Начинаем этап вето карт.
- */
 async function startVetoPhase(gameData, client) {
   gameData.gameStage = 'veto';
   gameData.removedMaps = new Set();
@@ -692,9 +631,6 @@ async function startVetoPhase(gameData, client) {
 }
 module.exports.startVetoPhase = startVetoPhase;
 
-/**
- * Обработка вето (убирания) карты капитанами.
- */
 async function handleVetoInteraction(interaction, gameId, mapName) {
   const gameData = activeGames.get(gameId);
   if (!gameData || gameData.gameStage !== 'veto') {
@@ -715,7 +651,6 @@ async function handleVetoInteraction(interaction, gameId, mapName) {
     vetoTurns: gameData.vetoTurns
   });
 
-  // Обновляем кнопки
   const oldRows = interaction.message.components;
   const newRows = [];
   for (const row of oldRows) {
@@ -736,7 +671,6 @@ async function handleVetoInteraction(interaction, gameId, mapName) {
     newRows.push(row2);
   }
 
-  // Сколько карт осталось?
   const mapsLeft = MAPS.map(m => m.name).filter(name => !gameData.removedMaps.has(name));
   if (mapsLeft.length > 1) {
     await interaction.update({ components: newRows });
@@ -770,23 +704,17 @@ async function handleVetoInteraction(interaction, gameId, mapName) {
       finalMap: gameData.finalMap
     });
 
-    // Переходим к финализации команд (и запуску сервера CS2)
     await finalizeTeams(gameData, interaction.client);
   }
 }
 module.exports.handleVetoInteraction = handleVetoInteraction;
 
-/**
- * Завершаем формирование команд. 
- * Создаём для них каналы, двигаем игроков, удаляем embed и запускаем сервер CS2 через createMatchOnServer.
- */
 async function finalizeTeams(gameData, client) {
   gameData.gameStage = 'teams_done';
 
   const guild = await client.guilds.fetch(gameData.guildId);
   const lobby = guild.channels.cache.get(gameData.lobbyId);
 
-  // Удаляем старые каналы команд, если они существуют
   if (gameData.team1ChannelId) {
     const ch1 = guild.channels.cache.get(gameData.team1ChannelId);
     if (ch1) await ch1.delete().catch(() => { });
@@ -796,7 +724,6 @@ async function finalizeTeams(gameData, client) {
     if (ch2) await ch2.delete().catch(() => { });
   }
 
-  // Определяем категорию для создания новых каналов
   let category = lobby?.parent ?? null;
   if (!category || category.type !== ChannelType.GuildCategory) {
     category = await guild.channels.create({
@@ -805,7 +732,6 @@ async function finalizeTeams(gameData, client) {
     });
   }
 
-  // Создаем новые голосовые каналы для команд
   const team1Channel = await guild.channels.create({
     name: 'Team 1',
     type: ChannelType.GuildVoice,
@@ -923,10 +849,6 @@ async function updateMatchInDB(gameId, updateObj) {
   });
 }
 
-/**
- * Утилита для создания строк кнопок (ActionRowBuilder),
- * делит кнопки на ряды по perRow штук.
- */
 function createRowsForButtons(buttons, perRow = 5) {
   const rows = [];
   for (let i = 0; i < buttons.length; i += perRow) {
@@ -937,9 +859,6 @@ function createRowsForButtons(buttons, perRow = 5) {
   return rows;
 }
 
-/**
- * Перемешивает массив (алгоритм Фишера–Йейтса).
- */
 function shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
