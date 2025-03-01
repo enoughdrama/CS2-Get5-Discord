@@ -1,9 +1,5 @@
 const mongoose = require('mongoose');
 
-/**
- * Полная схема, отражающая состояние матча.
- * При необходимости можно расширить или убрать некоторые поля.
- */
 const matchSchema = new mongoose.Schema({
   gameId:          { type: String, required: true },
   guildId:         { type: String, required: true },
