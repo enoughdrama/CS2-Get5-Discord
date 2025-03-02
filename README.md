@@ -17,8 +17,8 @@ A **Discord bot** for organizing **Counter-Strike 2 (CS2) pick-up games (PUGs)**
 
 ### 1️⃣ Clone the Repository
 ```sh
-git clone https://github.com/enoughdrama/cs2-pug-discord-bot.git
-cd cs2-pug-bot
+git clone https://github.com/enoughdrama/cs2-get5-discord.git
+cd cs2-get5-discord
 ```
 
 ### 2️⃣ Install Dependencies
