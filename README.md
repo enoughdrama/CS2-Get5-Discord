@@ -1,4 +1,4 @@
-# CS2 PUG Discord Bot
+# CS2 Get5 Discord
 
 A **Discord bot** for organizing **Counter-Strike 2 (CS2) pick-up games (PUGs)**. The bot manages team formation, player ready checks, map veto, and automatic match creation on a dedicated CS2 server.
 
