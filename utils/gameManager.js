@@ -935,7 +935,6 @@ async function finalizeTeams(gameData, client) {
   console.log(teamObjectDB)
   let matchInfo;
   try {
-    // Пример формирования config, который отправляем на сервер
     const matchConfig = {
       g5_api_url: "https://webhook.site/ee4aa84a-7e2d-40cd-aa00-f74a381f72c5",
       allow_suicide: false,
@@ -972,13 +971,11 @@ async function finalizeTeams(gameData, client) {
       text: JSON.stringify(matchConfig)
     });
 
-    // Извлекаем ID для коннекта
     const configId = matchConfigResponse?.data?.id;
     if (!configId) {
       throw new Error('Failed to get config ID from response');
     }
 
-    // Запускаем матч на CS2-сервере
     matchInfo = await createMatchOnServer({
       gameId: gameData.gameId,
       finalMap: gameData.finalMap,
@@ -989,7 +986,6 @@ async function finalizeTeams(gameData, client) {
     console.error(`Не удалось запустить матч #${gameData.gameId} на CS2-сервере:`, error);
   }
 
-  // Рассылаем игрокам адрес для подключение
   if (matchInfo) {
     for (const pid of gameData.players) {
       try {
@@ -1008,10 +1004,8 @@ async function finalizeTeams(gameData, client) {
     }
   }
 
-  // Удаляем игру из памяти
   activeGames.delete(gameData.gameId);
 
-  // Автоматически создаём новый матч в том же канале
   const queueChannel = guild.channels.cache.get(gameData.queueChannelId);
   if (queueChannel) {
     try {
@@ -1036,9 +1030,6 @@ module.exports.finalizeTeams = finalizeTeams;
  * ================================
  */
 
-/**
- * Получает embedMessage, если оно отсутствует в памяти.
- */
 async function fetchEmbedMessageIfNeeded(gameData, client) {
   if (gameData.embedMessage) return;
   if (!gameData.embedMessageId) return;
@@ -1054,9 +1045,6 @@ async function fetchEmbedMessageIfNeeded(gameData, client) {
   }
 }
 
-/**
- * Формирует описание для лобби (staging = 'waiting').
- */
 function getWaitingDescription(gameData) {
   const cnt = gameData.players.size;
   const req = gameData.requiredPlayers;
@@ -1064,9 +1052,6 @@ function getWaitingDescription(gameData) {
   return `Нужно игроков: **${req}**\nУже в Lobby (${cnt}):\n${list || '_никого нет_'}\n`;
 }
 
-/**
- * Формирует описание для этапа readyCheck.
- */
 function getReadyDescriptionCheck(gameData) {
   let desc = `Нажмите "Я готов!" в течение 15 секунд.\n\n`;
   for (const pid of gameData.players) {
@@ -1077,9 +1062,6 @@ function getReadyDescriptionCheck(gameData) {
   return desc;
 }
 
-/**
- * Преобразует массив Discord ID в объект вида { steamId: discordName }
- */
 async function transformTeam(discordIdArray) {
   const obj = {};
   for (const discordId of discordIdArray) {
@@ -1095,10 +1077,6 @@ async function transformTeam(discordIdArray) {
 }
 
 async function updateMatchInDB(gameId, updateObj) {
-  // 1) Преобразуем Set -> Array
-  // 2) Если gameStage !== 'teams_done', убираем team1/team2 из updateObj 
-  //    (чтобы не пытаться сохранять массивы в Map)
-
   const finalUpdate = {};
   for (const [k,v] of Object.entries(updateObj)) {
     if (v instanceof Set) {
@@ -1108,15 +1086,11 @@ async function updateMatchInDB(gameId, updateObj) {
     }
   }
 
-  // Если stage НЕ teams_done, вырезаем team1/team2 из finalUpdate
-  // чтобы не сохранить туда массив вместо Map
   if (finalUpdate.gameStage !== 'teams_done') {
     delete finalUpdate.team1;
     delete finalUpdate.team2;
   }
 
-  // Если stage == 'teams_done', то предполагаем, что team1/team2 — это массив Discord ID,
-  // и нужно transformTeam -> Map
   if (finalUpdate.gameStage === 'teams_done') {
     if (Array.isArray(finalUpdate.team1)) {
       finalUpdate.team1 = await transformTeam(finalUpdate.team1);
@@ -1137,9 +1111,6 @@ async function updateMatchInDB(gameId, updateObj) {
   }
 }
 
-/**
- * Создаёт ряды кнопок (по 5 на строку).
- */
 function createRowsForButtons(buttons, perRow = 5) {
   const rows = [];
   for (let i = 0; i < buttons.length; i += perRow) {
@@ -1150,9 +1121,6 @@ function createRowsForButtons(buttons, perRow = 5) {
   return rows;
 }
 
-/**
- * Перемешивает массив (алгоритм Фишера–Йетса).
- */
 function shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
