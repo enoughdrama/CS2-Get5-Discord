@@ -4,6 +4,7 @@ module.exports = {
         if (interaction.customId !== 'steam_modal') return;
 
         const steamId = interaction.fields.getTextInputValue('steam_id').trim();
+        // Простая проверка: не пустое и состоит только из цифр (SteamID64)
         if (!steamId || !/^\d+$/.test(steamId)) {
             return interaction.reply({ content: 'Введён некорректный SteamID. Попробуйте ещё раз.', ephemeral: true });
         }

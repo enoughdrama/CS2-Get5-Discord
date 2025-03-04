@@ -6,14 +6,19 @@ const {
 module.exports = {
   name: 'interactionCreate',
   async execute(interaction, client) {
+    // Обработка модальных окон (например, для ввода SteamID)
     if (interaction.type === InteractionType.ModalSubmit) {
+      // Если модальное окно для стим привязки
       if (interaction.customId === 'steam_modal') {
+        // Модальное окно обрабатывается в events/modalSubmit.js
         const modalHandler = require('./modalSubmit');
         return modalHandler.execute(interaction, client);
       }
+      // Если есть иные модальные окна, их можно добавить здесь
       return;
     }
     
+    // Обработка slash-команд
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
       const command = client.commands.get(commandName);
@@ -31,10 +36,13 @@ module.exports = {
       return;
     }
     
+    // Обработка кнопок
     if (interaction.isButton()) {
+      // Если кнопка для стим-связи (начинается с "steam_")
       if (interaction.customId.startsWith('steam_')) {
         const steamAction = interaction.customId.split('_')[1]; // "link", "unlink", "check"
         if (steamAction === 'link') {
+          // Показываем модальное окно для ввода SteamID
           const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
           const modal = new ModalBuilder()
             .setCustomId('steam_modal')
@@ -68,6 +76,7 @@ module.exports = {
         }
       }
       
+      // Если кнопка для игровых этапов (ready, veto, pick)
       const parts = interaction.customId.split('_');
       const action = parts[0];
       const gameId = parts[1];

@@ -7,7 +7,7 @@ const matchSchema = new mongoose.Schema({
   queueChannelId:  { type: String, default: null },
   requiredPlayers: { type: Number, default: 10 },
 
-  gameStage:       { type: String, default: 'waiting' }, // waiting, readyCheck, draft, veto, teams_done, ...
+  gameStage:       { type: String, default: 'waiting' },
 
   players:         { type: [String], default: [] },
   readyPlayers:    { type: [String], default: [] },
@@ -15,8 +15,9 @@ const matchSchema = new mongoose.Schema({
 
   captain1:        { type: String, default: null },
   captain2:        { type: String, default: null },
-  team1:           { type: [String], default: [] },
-  team2:           { type: [String], default: [] },
+
+  team1: { type: Map, of: String, default: {} },
+  team2: { type: Map, of: String, default: {} },
 
   removedMaps:     { type: [String], default: [] },
   finalMap:        { type: String, default: null },

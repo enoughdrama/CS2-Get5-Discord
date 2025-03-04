@@ -25,6 +25,7 @@ async function createMatchOnServer(matchData) {
 
     activeServers.push(availableServerConfig);
 
+    // Устанавливаем RCON-соединение с сервером
     const server = await Rcon.connect({
         host: availableServerConfig.host,
         port: availableServerConfig.port,
@@ -32,63 +33,8 @@ async function createMatchOnServer(matchData) {
     });
 
     try {
-        console.log(`Устанавливаем карту "${matchData.finalMap}" на сервере ${availableServerConfig.host}:${availableServerConfig.port}`);
-        await server.send(`changelevel ${matchData.finalMap}`);
-
-        const players = Array.isArray(matchData.players)
-            ? matchData.players
-            : Array.from(matchData.players);
-
-        for (const playerId of players) {
-            const user = await User.findOne({ userId: playerId });
-            if (!user) {
-                console.warn(`Пользователь с userId ${playerId} не найден в БД.`);
-                continue;
-            }
-            console.log(`Вайтлистим игрока с SteamID: ${user.steamId}`);
-            await server.send(`whitelist_add ${user.steamId}`);
-        }
-
-        console.log(`Запускаем knife round на сервере ${availableServerConfig.host}`);
-        await server.send("knife_round_start");
-
-        console.log(`Запускаем 5-минутный warmup на сервере ${availableServerConfig.host}`);
-        await server.send("mp_warmup_time 300");
-        await server.send("mp_warmup_start");
-
-        if (matchData.configUrl) {
-            console.log(`Загружаем конфигурацию матча из URL: ${matchData.configUrl}`);
-            const tokenPart = matchData.authToken ? ` ${matchData.authToken}` : '';
-            await server.send(`ps_loadconfig ${matchData.configUrl}${tokenPart}`);
-        }
-        else if (matchData.configFile) {
-            console.log(`Загружаем конфигурацию матча из файла: ${matchData.configFile}`);
-            await server.send(`ps_loadconfigfile ${matchData.configFile}`);
-        }
-        else {
-            console.log(`Создаем матч без предзагруженной конфигурации`);
-            await server.send("ps_creatematch");
-        }
-
-        if (matchData.playersPerTeam) {
-            console.log(`Устанавливаем количество игроков в команде: ${matchData.playersPerTeam}`);
-            await server.send(`ps_playersperteam ${matchData.playersPerTeam}`);
-        }
-        if (matchData.maxRounds) {
-            console.log(`Устанавливаем максимальное количество раундов: ${matchData.maxRounds}`);
-            await server.send(`ps_maxrounds ${matchData.maxRounds}`);
-        }
-        if (matchData.maxOvertimeRounds) {
-            console.log(`Устанавливаем максимальное количество овертайм раундов: ${matchData.maxOvertimeRounds}`);
-            await server.send(`ps_maxovertimerounds ${matchData.maxOvertimeRounds}`);
-        }
-        if (matchData.teamMode) {
-            console.log(`Устанавливаем режим игры: ${matchData.teamMode}`);
-            await server.send(`ps_teammode ${matchData.teamMode}`);
-        }
-
-        console.log(`Запускаем матч с помощью ps_startmatch на сервере ${availableServerConfig.host}`);
-        await server.send("ps_startmatch");
+        console.log(`Запускаем матч из URL: ${matchData.matchConfigUrl}`);
+        await server.send(`ps_loadconfig "${matchData.matchConfigUrl}"`);
 
         console.log(`Матч ${matchData.gameId} успешно создан на сервере ${availableServerConfig.host}`);
 
@@ -120,8 +66,9 @@ async function endMatchOnServer(matchData, endDiscordCallback) {
     }
     try {
         console.log(`Завершаем игру на сервере ${matchData.serverConfig.host}`);
-        
+        // Отправляем команду для немедленной остановки матча (например, ps_stopmatch)
         await matchData.serverInstance.send("ps_stopmatch");
+        // Завершаем RCON-соединение
         await matchData.serverInstance.end();
 
         removeServerFromActive(matchData.serverConfig);

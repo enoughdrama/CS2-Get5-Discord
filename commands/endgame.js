@@ -1,32 +1,76 @@
-const { finalizeTeams, activeGames } = require('../utils/gameManager');
-const { PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
+const Match = require('../models/match');
+const { activeGames } = require('../utils/gameManager');
 
 module.exports = {
   name: 'endgame',
-  description: 'Принудительно завершить матч по указанному match_id (admin only).',
+  data: new SlashCommandBuilder()
+    .setName('endgame')
+    .setDescription('Завершить игру и удалить данные из БД (admin only).')
+    .addStringOption(option =>
+      option
+        .setName('gameid')
+        .setDescription('Идентификатор матча, который нужно завершить')
+        .setRequired(true)
+    ),
   async execute(interaction, client) {
-    // Команда доступна только администраторам
+    // Проверка прав администратора
     if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.reply({ content: 'У вас нет прав для использования этой команды.', ephemeral: true });
     }
 
-    const matchId = interaction.options.getString('match_id');
-    if (!matchId) {
-      return interaction.reply({ content: 'Необходимо указать match_id.', ephemeral: true });
-    }
+    await interaction.deferReply({ ephemeral: true });
+    const gameId = interaction.options.getString('gameid');
+    const guild = interaction.guild;
 
-    const gameData = activeGames.get(matchId);
+    // Ищем игру в activeGames
+    let gameData = activeGames.get(gameId);
+    // Также пытаемся найти игру в MongoDB
+    const gameDataDB = await Match.findOne({ gameId });
+    if (!gameData && !gameDataDB) {
+      return interaction.editReply({ content: `Игра с gameId ${gameId} не найдена ни в памяти, ни в базе.` });
+    }
+    // Если игра не найдена в памяти, используем данные из БД для удаления каналов
     if (!gameData) {
-      return interaction.reply({ content: `Матч с ID ${matchId} не найден или уже завершен.`, ephemeral: true });
+      gameData = {
+        gameId: gameDataDB.gameId,
+        guildId: gameDataDB.guildId,
+        lobbyId: gameDataDB.lobbyId,
+        queueChannelId: gameDataDB.queueChannelId,
+        team1ChannelId: gameDataDB.team1ChannelId,
+        team2ChannelId: gameDataDB.team2ChannelId
+      };
     }
 
+    // Удаляем каналы команд, если они существуют
     try {
-      // finalizeTeams удаляет голосовые каналы команд, если они созданы, и сохраняет матч в БД.
-      await finalizeTeams(gameData, client);
-      await interaction.reply({ content: `Матч #${matchId} завершен. Командные голосовые каналы удалены (если присутствуют).`, ephemeral: true });
-    } catch (err) {
-      console.error('Ошибка при завершении матча:', err);
-      await interaction.reply({ content: 'Ошибка при завершении матча.', ephemeral: true });
+      if (gameData.team1ChannelId) {
+        const team1Channel = await guild.channels.fetch(gameData.team1ChannelId);
+        if (team1Channel) {
+          await team1Channel.delete();
+        }
+      }
+      if (gameData.team2ChannelId) {
+        const team2Channel = await guild.channels.fetch(gameData.team2ChannelId);
+        if (team2Channel) {
+          await team2Channel.delete();
+        }
+      }
+    } catch (error) {
+      console.error(`Ошибка при удалении голосовых каналов матча ${gameId}:`, error);
     }
+
+    // Удаляем запись матча из БД
+    try {
+      await Match.findOneAndDelete({ gameId });
+    } catch (error) {
+      console.error(`Не удалось удалить матч (gameId=${gameId}) из БД:`, error);
+      return interaction.editReply({ content: 'Ошибка удаления матча из базы данных.' });
+    }
+
+    // Удаляем игру из активных игр
+    activeGames.delete(gameId);
+
+    await interaction.editReply({ content: `Матч с gameId ${gameId} успешно завершён и удалён из БД. Каналы команд также удалены.` });
   },
 };
