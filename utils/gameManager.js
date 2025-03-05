@@ -1,3 +1,5 @@
+// gameManager.js
+
 const { uuidv7 } = require('uuidv7');
 const axios = require('axios');
 const {
@@ -12,23 +14,33 @@ const {
 const User = require('../models/user');
 const Match = require('../models/match');
 
-const {
-  createMatchOnServer,
-  endMatchOnServer
-} = require('./cs2ServerController');
+const { formatMatchConfig, createMatchOnServer, startServer } = require('./cs2ServerController');
 
 // ================================
 //            CONSTANTS
 // ================================
 const activeGames = new Map();
 
-// Возможные карты
 const MAPS = [
   { name: 'Mirage', code: 'de_mirage', emoji: '🏜️' },
   { name: 'Dust', code: 'de_dust2', emoji: '🌪️' },
   { name: 'Nuke', code: 'de_nuke', emoji: '☢️' },
-  { name: 'Train', code: 'de_train', emoji: '🚂' }
+  { name: 'Train', code: 'de_train', emoji: '🚂' },
+  { name: 'Cache', code: 'de_cache', emoji: '🛡️' }
 ];
+
+function generateStringHash(str) {
+  let hash = 0;
+  if (str.length === 0) return hash;
+
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+
+  return Math.abs(hash);
+}
 
 // ================================
 //      INITIAL LOAD OF GAMES
@@ -46,7 +58,7 @@ const MAPS = [
       // В "сыром" doc.team1 будет Map-объект, если уже финал.
       // Превращаем, если обнаружим, в пустой массив, т.к. драфт уже не нужен.
       const team1 = typeof doc.team1 === 'object' && !Array.isArray(doc.team1)
-        ? [] 
+        ? []
         : (doc.team1 ?? []);
       const team2 = typeof doc.team2 === 'object' && !Array.isArray(doc.team2)
         ? []
@@ -94,7 +106,7 @@ module.exports.activeGames = activeGames;
  * Создаёт новую игру (запись в БД и объект в памяти).
  */
 async function createNewGame({ guild, queueTextChannel, lobbyVoice, requiredPlayers }) {
-  const gameId = uuidv7();
+  const gameId = generateStringHash(uuidv7());
 
   const gameData = {
     gameId,
@@ -155,6 +167,8 @@ module.exports.createNewGame = createNewGame;
  * Восстанавливает embed-сообщения для активных матчей (если бот перезагружен).
  */
 async function restoreActiveMatches(client) {
+  startServer(client);
+
   const ongoingMatches = await Match.find({ gameStage: { $ne: 'teams_done' } });
   for (const matchDoc of ongoingMatches) {
     const team1 = typeof matchDoc.team1 === 'object' && !Array.isArray(matchDoc.team1)
@@ -385,39 +399,70 @@ module.exports.startReadyCheck = startReadyCheck;
  * Обработка кнопки "Я готов!"
  */
 async function handleReadyCheck(interaction, gameId) {
-  const gameData = activeGames.get(gameId);
-  if (!gameData || gameData.gameStage !== 'readyCheck') {
-    return interaction.reply({ content: 'Сейчас не этап готовности!', ephemeral: true });
-  }
-  if (!gameData.players.has(interaction.user.id)) {
-    return interaction.reply({ content: 'Вы не участвуете в этом матче.', ephemeral: true });
-  }
-
-  // Добавляем игрока в readyPlayers
-  gameData.readyPlayers.add(interaction.user.id);
-
-  await updateMatchInDB(gameData.gameId, {
-    readyPlayers: Array.from(gameData.readyPlayers)
-  });
-
-  // Обновляем embed
-  const embed = new EmbedBuilder()
-    .setTitle(`Матч #${gameData.gameId} — Подтверждение готовности`)
-    .setDescription(getReadyDescriptionCheck(gameData))
-    .setColor('Blue');
-
-  await interaction.update({
-    embeds: [embed],
-    components: interaction.message.components
-  });
-
-  // Если все нажали "Я готов", сразу переходим дальше
-  if (gameData.readyPlayers.size === gameData.players.size) {
-    if (gameData.readyTimeout) {
-      clearTimeout(gameData.readyTimeout);
-      delete gameData.readyTimeout;
+  try {
+    const gameData = activeGames.get(gameId);
+    if (!gameData || gameData.gameStage !== 'readyCheck') {
+      if (!interaction.replied && !interaction.deferred) {
+        return await interaction.reply({ content: 'Сейчас не этап готовности!', ephemeral: true });
+      }
+      return;
     }
-    await startDraftPhase(gameData, interaction.client);
+
+    if (!gameData.players.has(interaction.user.id)) {
+      if (!interaction.replied && !interaction.deferred) {
+        return await interaction.reply({ content: 'Вы не участвуете в этом матче.', ephemeral: true });
+      }
+      return;
+    }
+
+    // Defer the update to prevent interaction expiration
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate();
+    }
+
+    // Добавляем игрока в readyPlayers
+    gameData.readyPlayers.add(interaction.user.id);
+
+    await updateMatchInDB(gameData.gameId, {
+      readyPlayers: Array.from(gameData.readyPlayers)
+    });
+
+    // Обновляем embed
+    const embed = new EmbedBuilder()
+      .setTitle(`Матч #${gameData.gameId} — Подтверждение готовности`)
+      .setDescription(getReadyDescriptionCheck(gameData))
+      .setColor('Blue');
+
+    // Use editReply if already deferred
+    if (interaction.deferred) {
+      await interaction.editReply({
+        embeds: [embed],
+        components: interaction.message.components
+      });
+    } else if (!interaction.replied) {
+      await interaction.update({
+        embeds: [embed],
+        components: interaction.message.components
+      });
+    }
+
+    // Если все нажали "Я готов", сразу переходим дальше
+    if (gameData.readyPlayers.size === gameData.players.size) {
+      if (gameData.readyTimeout) {
+        clearTimeout(gameData.readyTimeout);
+        delete gameData.readyTimeout;
+      }
+      await startDraftPhase(gameData, interaction.client);
+    }
+  } catch (error) {
+    console.error('Ошибка в handleReadyCheck:', error);
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: 'Произошла ошибка при обработке готовности!', ephemeral: true });
+      } catch (replyErr) {
+        console.error('Не удалось отправить сообщение об ошибке:', replyErr);
+      }
+    }
   }
 }
 module.exports.handleReadyCheck = handleReadyCheck;
@@ -572,13 +617,15 @@ async function processDraftPick(gameData, pickPlayerId, client, guild, interacti
 
   // Если есть interaction, проверяем, что нажал правильный капитан
   if (interaction && interaction.user.id !== currentCaptain) {
-    await interaction.reply({ content: 'Сейчас ход другого капитана!', ephemeral: true });
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: 'Сейчас ход другого капитана!', ephemeral: true });
+    }
     return;
   }
 
   const idx = gameData.restPlayers.indexOf(pickPlayerId);
   if (idx === -1) {
-    if (interaction) {
+    if (interaction && !interaction.replied && !interaction.deferred) {
       await interaction.reply({ content: 'Этот игрок уже выбран!', ephemeral: true });
     }
     return;
@@ -655,7 +702,11 @@ async function processDraftPick(gameData, pickPlayerId, client, guild, interacti
 
   // Если это был interaction, обновляем через update. Иначе – через edit.
   if (interaction) {
-    await interaction.update({ embeds: [embed], components: newRows });
+    if (interaction.deferred) {
+      await interaction.editReply({ embeds: [embed], components: newRows });
+    } else if (!interaction.replied) {
+      await interaction.update({ embeds: [embed], components: newRows });
+    }
   } else {
     await gameData.embedMessage.edit({ embeds: [embed], components: newRows });
   }
@@ -700,12 +751,32 @@ async function processDraftPick(gameData, pickPlayerId, client, guild, interacti
  * Экспорт обработки каптанского "пика" через кнопку.
  */
 const handlePickInteraction = async function (interaction, gameId, pickPlayerId) {
-  const gameData = activeGames.get(gameId);
-  if (!gameData || gameData.gameStage !== 'draft') {
-    return interaction.reply({ content: 'Сейчас не стадия драфта!', ephemeral: true });
+  try {
+    const gameData = activeGames.get(gameId);
+    if (!gameData || gameData.gameStage !== 'draft') {
+      if (!interaction.replied && !interaction.deferred) {
+        return await interaction.reply({ content: 'Сейчас не стадия драфта!', ephemeral: true });
+      }
+      return;
+    }
+
+    // Defer update if not already replied/deferred
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate();
+    }
+
+    const guild = await interaction.guild;
+    await processDraftPick(gameData, pickPlayerId, interaction.client, guild, interaction);
+  } catch (error) {
+    console.error('Ошибка в handlePickInteraction:', error);
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: 'Произошла ошибка при выборе игрока!', ephemeral: true });
+      } catch (replyErr) {
+        console.error('Не удалось отправить сообщение об ошибке:', replyErr);
+      }
+    }
   }
-  const guild = await interaction.guild;
-  await processDraftPick(gameData, pickPlayerId, interaction.client, guild, interaction);
 };
 module.exports.handlePickInteraction = handlePickInteraction;
 
@@ -757,94 +828,124 @@ module.exports.startVetoPhase = startVetoPhase;
  * Обработка кнопки "veto_{gameId}_{mapName}"
  */
 async function handleVetoInteraction(interaction, gameId, mapName) {
-  const gameData = activeGames.get(gameId);
-  if (!gameData || gameData.gameStage !== 'veto') {
-    return interaction.reply({ content: 'Сейчас не стадия вето!', ephemeral: true });
-  }
-
-  const isC1Turn = (gameData.vetoTurns % 2 === 0);
-  const currentCaptain = isC1Turn ? gameData.captain1 : gameData.captain2;
-  if (interaction.user.id !== currentCaptain) {
-    return interaction.reply({ content: 'Сейчас ход другого капитана!', ephemeral: true });
-  }
-
-  gameData.removedMaps.add(mapName);
-  gameData.vetoTurns++;
-
-  await updateMatchInDB(gameData.gameId, {
-    removedMaps: Array.from(gameData.removedMaps),
-    vetoTurns: gameData.vetoTurns
-  });
-
-  // Отключаем кнопку убранной карты
-  const oldRows = interaction.message.components;
-  const newRows = [];
-  for (const row of oldRows) {
-    const row2 = new ActionRowBuilder();
-    for (const c of row.components) {
-      const btn = ButtonBuilder.from(c);
-      const id = btn.data?.custom_id;
-      if (!id) {
-        continue;
+  try {
+    const gameData = activeGames.get(gameId);
+    if (!gameData || gameData.gameStage !== 'veto') {
+      if (!interaction.replied && !interaction.deferred) {
+        return await interaction.reply({ content: 'Сейчас не стадия вето!', ephemeral: true });
       }
-      const [act, gId, thisMap] = id.split('_');
-      if (thisMap === mapName) {
-        btn.setStyle(ButtonStyle.Danger).setDisabled(true);
-      }
-      if (gameData.removedMaps.has(thisMap)) {
-        btn.setDisabled(true);
-      }
-      row2.addComponents(btn);
+      return;
     }
-    newRows.push(row2);
-  }
 
-  const mapsLeft = MAPS.map(m => m.name).filter(name => !gameData.removedMaps.has(name));
-  if (mapsLeft.length > 1) {
-    // Меняем описание (чей ход)
-    const currentCaptainAfter = (gameData.vetoTurns % 2 === 0) ? gameData.captain1 : gameData.captain2;
-    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-      .setDescription(
-        `Капитаны: <@${gameData.captain1}> и <@${gameData.captain2}>\n` +
-        `Сейчас ход: <@${currentCaptainAfter}>\n\n` +
-        `По очереди убирают карты. Когда останется 1 — этап завершён.`
-      );
-    await interaction.update({ embeds: [updatedEmbed], components: newRows });
-  } else {
-    // Осталась одна карта
-    const selectedMapName = mapsLeft[0];
-    const selectedMap = MAPS.find(m => m.name === selectedMapName);
-    gameData.finalMap = selectedMap ? selectedMap.code : selectedMapName;
+    const isC1Turn = (gameData.vetoTurns % 2 === 0);
+    const currentCaptain = isC1Turn ? gameData.captain1 : gameData.captain2;
+    if (interaction.user.id !== currentCaptain) {
+      if (!interaction.replied && !interaction.deferred) {
+        return await interaction.reply({ content: 'Сейчас ход другого капитана!', ephemeral: true });
+      }
+      return;
+    }
 
-    // Обновляем UI, показываем финальную карту зелёным
-    const finalRows = [];
-    for (const row of newRows) {
+    // Defer update if not already replied/deferred
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate();
+    }
+
+    gameData.removedMaps.add(mapName);
+    gameData.vetoTurns++;
+
+    await updateMatchInDB(gameData.gameId, {
+      removedMaps: Array.from(gameData.removedMaps),
+      vetoTurns: gameData.vetoTurns
+    });
+
+    // Отключаем кнопку убранной карты
+    const oldRows = interaction.message.components;
+    const newRows = [];
+    for (const row of oldRows) {
       const row2 = new ActionRowBuilder();
       for (const c of row.components) {
         const btn = ButtonBuilder.from(c);
         const id = btn.data?.custom_id;
         if (!id) {
-          row2.addComponents(btn);
           continue;
         }
         const [act, gId, thisMap] = id.split('_');
-        if (thisMap === gameData.finalMap) {
-          btn.setStyle(ButtonStyle.Success);
+        if (thisMap === mapName) {
+          btn.setStyle(ButtonStyle.Danger).setDisabled(true);
         }
-        btn.setDisabled(true);
+        if (gameData.removedMaps.has(thisMap)) {
+          btn.setDisabled(true);
+        }
         row2.addComponents(btn);
       }
-      finalRows.push(row2);
+      newRows.push(row2);
     }
-    await interaction.update({ components: finalRows });
 
-    await updateMatchInDB(gameData.gameId, {
-      finalMap: gameData.finalMap
-    });
+    const mapsLeft = MAPS.map(m => m.name).filter(name => !gameData.removedMaps.has(name));
+    if (mapsLeft.length > 1) {
+      // Update with current captain
+      const currentCaptainAfter = (gameData.vetoTurns % 2 === 0) ? gameData.captain1 : gameData.captain2;
+      const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+        .setDescription(
+          `Капитаны: <@${gameData.captain1}> и <@${gameData.captain2}>\n` +
+          `Сейчас ход: <@${currentCaptainAfter}>\n\n` +
+          `По очереди убирают карты. Когда останется 1 — этап завершён.`
+        );
+      await interaction.editReply({ embeds: [updatedEmbed], components: newRows });
+    } else {
+      // Осталась одна карта
+      const selectedMapName = mapsLeft[0];
+      const selectedMap = MAPS.find(m => m.name === selectedMapName);
+      gameData.finalMap = selectedMap ? selectedMap.code : selectedMapName;
 
-    await finalizeTeams(gameData, interaction.client);
+      // Обновляем UI, показываем финальную карту зелёным
+      const finalRows = [];
+      for (const row of newRows) {
+        const row2 = new ActionRowBuilder();
+        for (const c of row.components) {
+          const btn = ButtonBuilder.from(c);
+          const id = btn.data?.custom_id;
+          if (!id) {
+            row2.addComponents(btn);
+            continue;
+          }
+          const [act, gId, thisMap] = id.split('_');
+          if (thisMap === selectedMapName) {
+            btn.setStyle(ButtonStyle.Success);
+          }
+          btn.setDisabled(true);
+          row2.addComponents(btn);
+        }
+        finalRows.push(row2);
+      }
+      await interaction.editReply({ components: finalRows });
+
+      await updateMatchInDB(gameData.gameId, {
+        finalMap: gameData.finalMap
+      });
+
+      // Add delay before finalizing teams
+      setTimeout(async () => {
+        await finalizeTeams(gameData, interaction.client);
+      }, 1000);
+    }
+  } catch (error) {
+    console.error(`Ошибка при обработке вето:`, error);
+    try {
+      // Only attempt to reply if interaction hasn't been replied to
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: 'Произошла ошибка при обработке вето. Попробуйте еще раз.',
+          ephemeral: true
+        });
+      }
+    } catch (replyError) {
+      console.error('Ошибка при отправке сообщения об ошибке:', replyError);
+    }
   }
 }
+
 module.exports.handleVetoInteraction = handleVetoInteraction;
 
 /**
@@ -863,11 +964,11 @@ async function finalizeTeams(gameData, client) {
   // Удаляем старые каналы, если есть
   if (gameData.team1ChannelId) {
     const ch1 = guild.channels.cache.get(gameData.team1ChannelId);
-    if (ch1) await ch1.delete().catch(() => {});
+    if (ch1) await ch1.delete().catch(() => { });
   }
   if (gameData.team2ChannelId) {
     const ch2 = guild.channels.cache.get(gameData.team2ChannelId);
-    if (ch2) await ch2.delete().catch(() => {});
+    if (ch2) await ch2.delete().catch(() => { });
   }
 
   // Создаем категорию, если нужно
@@ -912,8 +1013,6 @@ async function finalizeTeams(gameData, client) {
     }
   }
 
-  // Обновляем в БД – это вызовет transformTeam, 
-  // которое сделает team1/team2 вида { steamId: 'discordName', ... }
   await updateMatchInDB(gameData.gameId, {
     gameStage: 'teams_done',
     team1ChannelId: gameData.team1ChannelId,
@@ -932,41 +1031,17 @@ async function finalizeTeams(gameData, client) {
   }
 
   const teamObjectDB = await Match.findOne({ gameId: gameData.gameId });
-  console.log(teamObjectDB)
   let matchInfo;
   try {
-    const matchConfig = {
-      g5_api_url: "https://webhook.site/ee4aa84a-7e2d-40cd-aa00-f74a381f72c5",
-      allow_suicide: false,
-      team_mode: 0,
-      max_overtime_rounds: 6,
-      max_rounds: 24,
-      min_players_to_ready: 0,
-      players_per_team: Array.from(gameData.players).length / 2,
-      num_maps: 1,
-      matchid: gameData.gameId,
-      server_locale: "en",
-
-      maplist: [ gameData.finalMap ],
-      vote_map: gameData.finalMap,
-      
-      team1: {
-        id: '1',
-        name: 'Zombies',
-        tag: 'Zombie',
-        flag: 'DE',
-        players: teamObjectDB.team1
+    const matchConfig = await formatMatchConfig(
+      {
+        gameId: gameData.gameId,
+        finalMap: gameData.finalMap
       },
-      team2: {
-        id: '2',
-        name: 'Humans',
-        tag: 'Human',
-        flag: 'DE',
-        players: teamObjectDB.team2
-      }
-    };
+      teamObjectDB,
+      client
+    );
 
-    // Сохраняем конфиг где-нибудь во внешнем сервисе
     const matchConfigResponse = await axios.post('https://763487648764376983479586.cfd/postText', {
       text: JSON.stringify(matchConfig)
     });
@@ -981,11 +1056,12 @@ async function finalizeTeams(gameData, client) {
       finalMap: gameData.finalMap,
       matchConfigUrl: `https://763487648764376983479586.cfd/getText/${configId}`
     });
-    console.log(`Матч #${gameData.gameId} успешно запущен на CS2-сервере.`);
+    console.log(`Матч #${gameData.gameId} успешно запущен на CS2-сервере с MatchZy.`);
   } catch (error) {
     console.error(`Не удалось запустить матч #${gameData.gameId} на CS2-сервере:`, error);
   }
 
+  // In the finalizeTeams function, update the connect message part:
   if (matchInfo) {
     for (const pid of gameData.players) {
       try {
@@ -993,7 +1069,10 @@ async function finalizeTeams(gameData, client) {
         if (user) {
           const connectEmbed = new EmbedBuilder()
             .setTitle("Подключитесь к матчу!")
-            .setDescription(`Введите команду: \`connect ${matchInfo.host}:${matchInfo.port}\``)
+            .setDescription(
+              `Match ID: **${gameData.gameId}**\n\n` +
+              `Введите команду:\n\`\`\`bash\nconnect ${matchInfo.host}:${matchInfo.port}\n\`\`\``
+            )
             .setColor("Green")
             .setFooter({ text: "Удачи в игре!" });
           await user.send({ embeds: [connectEmbed] });
@@ -1004,8 +1083,10 @@ async function finalizeTeams(gameData, client) {
     }
   }
 
+  // Удаляем игру из памяти
   activeGames.delete(gameData.gameId);
 
+  // Автоматически создаём новый матч в том же канале
   const queueChannel = guild.channels.cache.get(gameData.queueChannelId);
   if (queueChannel) {
     try {
@@ -1030,6 +1111,9 @@ module.exports.finalizeTeams = finalizeTeams;
  * ================================
  */
 
+/**
+ * Получает embedMessage, если оно отсутствует в памяти.
+ */
 async function fetchEmbedMessageIfNeeded(gameData, client) {
   if (gameData.embedMessage) return;
   if (!gameData.embedMessageId) return;
@@ -1045,6 +1129,9 @@ async function fetchEmbedMessageIfNeeded(gameData, client) {
   }
 }
 
+/**
+ * Формирует описание для лобби (staging = 'waiting').
+ */
 function getWaitingDescription(gameData) {
   const cnt = gameData.players.size;
   const req = gameData.requiredPlayers;
@@ -1052,6 +1139,9 @@ function getWaitingDescription(gameData) {
   return `Нужно игроков: **${req}**\nУже в Lobby (${cnt}):\n${list || '_никого нет_'}\n`;
 }
 
+/**
+ * Формирует описание для этапа readyCheck.
+ */
 function getReadyDescriptionCheck(gameData) {
   let desc = `Нажмите "Я готов!" в течение 15 секунд.\n\n`;
   for (const pid of gameData.players) {
@@ -1062,6 +1152,9 @@ function getReadyDescriptionCheck(gameData) {
   return desc;
 }
 
+/**
+ * Преобразует массив Discord ID в объект вида { steamId: discordName }
+ */
 async function transformTeam(discordIdArray) {
   const obj = {};
   for (const discordId of discordIdArray) {
@@ -1077,8 +1170,12 @@ async function transformTeam(discordIdArray) {
 }
 
 async function updateMatchInDB(gameId, updateObj) {
+  // 1) Преобразуем Set -> Array
+  // 2) Если gameStage !== 'teams_done', убираем team1/team2 из updateObj 
+  //    (чтобы не пытаться сохранять массивы в Map)
+
   const finalUpdate = {};
-  for (const [k,v] of Object.entries(updateObj)) {
+  for (const [k, v] of Object.entries(updateObj)) {
     if (v instanceof Set) {
       finalUpdate[k] = Array.from(v);
     } else {
@@ -1086,11 +1183,15 @@ async function updateMatchInDB(gameId, updateObj) {
     }
   }
 
+  // Если stage НЕ teams_done, вырезаем team1/team2 из finalUpdate
+  // чтобы не сохранить туда массив вместо Map
   if (finalUpdate.gameStage !== 'teams_done') {
     delete finalUpdate.team1;
     delete finalUpdate.team2;
   }
 
+  // Если stage == 'teams_done', то предполагаем, что team1/team2 — это массив Discord ID,
+  // и нужно transformTeam -> Map
   if (finalUpdate.gameStage === 'teams_done') {
     if (Array.isArray(finalUpdate.team1)) {
       finalUpdate.team1 = await transformTeam(finalUpdate.team1);
@@ -1111,6 +1212,9 @@ async function updateMatchInDB(gameId, updateObj) {
   }
 }
 
+/**
+ * Создаёт ряды кнопок (по 5 на строку).
+ */
 function createRowsForButtons(buttons, perRow = 5) {
   const rows = [];
   for (let i = 0; i < buttons.length; i += perRow) {
@@ -1121,6 +1225,9 @@ function createRowsForButtons(buttons, perRow = 5) {
   return rows;
 }
 
+/**
+ * Перемешивает массив (алгоритм Фишера–Йетса).
+ */
 function shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));

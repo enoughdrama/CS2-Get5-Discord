@@ -1,3 +1,4 @@
+// ФАЙЛ: commands/startgame.js
 const { SlashCommandBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { createNewGame } = require('../utils/gameManager');
 

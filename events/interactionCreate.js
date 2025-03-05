@@ -1,6 +1,6 @@
-const { 
+const {
   SlashCommandBuilder,
-  InteractionType 
+  InteractionType
 } = require('discord.js');
 
 module.exports = {
@@ -17,7 +17,7 @@ module.exports = {
       // Если есть иные модальные окна, их можно добавить здесь
       return;
     }
-    
+
     // Обработка slash-команд
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
@@ -35,7 +35,7 @@ module.exports = {
       }
       return;
     }
-    
+
     // Обработка кнопок
     if (interaction.isButton()) {
       // Если кнопка для стим-связи (начинается с "steam_")
@@ -75,29 +75,23 @@ module.exports = {
           return interaction.reply({ content: 'Неизвестное действие для Steam.', ephemeral: true });
         }
       }
-      
-      // Если кнопка для игровых этапов (ready, veto, pick)
+
       const parts = interaction.customId.split('_');
       const action = parts[0];
       const gameId = parts[1];
       const payload = parts.length > 2 ? parts.slice(2).join('_') : null;
       const { handleReadyCheck, handleVetoInteraction, handlePickInteraction } = require('../utils/gameManager');
-      try {
-        if (action === 'ready') {
-          await handleReadyCheck(interaction, gameId);
-        } else if (action === 'veto') {
-          await handleVetoInteraction(interaction, gameId, payload);
-        } else if (action === 'pick') {
-          await handlePickInteraction(interaction, gameId, payload);
-        } else {
-          await interaction.reply({ content: 'Неизвестное действие кнопки.', ephemeral: true });
-        }
-      } catch (error) {
-        console.error('Ошибка при обработке кнопки:', error);
+
+      // Let the handlers decide whether to defer or not
+      if (action === 'ready') {
+        await handleReadyCheck(interaction, gameId);
+      } else if (action === 'veto') {
+        await handleVetoInteraction(interaction, gameId, payload);
+      } else if (action === 'pick') {
+        await handlePickInteraction(interaction, gameId, payload);
+      } else {
         if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: 'Произошла ошибка при обработке!', ephemeral: true });
-        } else {
-          await interaction.followUp({ content: 'Ошибка при обработке.', ephemeral: true });
+          await interaction.reply({ content: 'Неизвестное действие кнопки.', ephemeral: true });
         }
       }
     }

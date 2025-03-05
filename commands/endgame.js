@@ -1,3 +1,4 @@
+// ФАЙЛ: commands/endgame.js
 const { SlashCommandBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
 const Match = require('../models/match');
 const { activeGames } = require('../utils/gameManager');
